@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ASCII Engine · Noxe</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&family=Nunito:wght@800&family=Outfit:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root { --paper:#EDEFF2; --ink:#141823; --graphite:#69707F; --violet:#6E2BF0; --lavender:#B08CFF; }
+  html, body { margin:0; height:100%; background:#07080c; overflow:hidden; }
+  canvas#c { position:fixed; inset:0; width:100vw; height:100vh; display:block; }
+  #hud { position:fixed; left:16px; bottom:14px; font:500 11px/1.4 'IBM Plex Mono', monospace; color:var(--paper);
+         opacity:.7; letter-spacing:.04em; pointer-events:none; user-select:none; }
+  #hud b { font:800 13px 'Nunito', sans-serif; letter-spacing:.06em; margin-right:8px; color:var(--lavender); }
+  #toast { position:fixed; left:50%; bottom:22px; transform:translate(-50%, 12px); opacity:0; transition:.25s;
+           background:var(--ink); color:var(--paper); border:1px solid #2a3042; border-radius:8px; padding:8px 14px;
+           font:400 12px 'Outfit', sans-serif; pointer-events:none; }
+  #toast.on { opacity:1; transform:translate(-50%, 0); }
+  #drop { position:fixed; inset:14px; border:2px dashed var(--lavender); border-radius:14px; display:none;
+          align-items:center; justify-content:center; color:var(--paper); background:rgba(20,24,35,.55);
+          font:800 28px 'Nunito', sans-serif; pointer-events:none; }
+  #drop.on { display:flex; }
+  body.clean #hud { display:none; }
+
+  .lil-gui { --background-color:#141823; --text-color:#EDEFF2; --title-background-color:#0d1018; --title-text-color:#EDEFF2;
+             --widget-color:#232838; --hover-color:#2c3245; --focus-color:#3a2a6e; --number-color:#B08CFF; --string-color:#B08CFF;
+             --font-family:'IBM Plex Mono', monospace; --font-size:11px; --input-font-size:11px; --widget-height:20px;
+             --name-width:44%; --folder-indent:6px; }
+  .lil-gui.root { border-radius:10px; overflow:hidden; box-shadow:0 10px 40px rgba(0,0,0,.45); top:12px !important; right:12px !important; }
+  .lil-gui.root > .title { font-family:'Nunito', sans-serif; font-weight:800; font-size:13px; letter-spacing:.03em; }
+  .lil-gui .title { font-weight:600; }
+  .lil-gui.root > .children { max-height:calc(100vh - 70px); overflow-y:auto; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+  "lil-gui": "https://cdn.jsdelivr.net/npm/lil-gui@0.20.0/dist/lil-gui.esm.min.js"
+} }
+</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"><b>NOXE</b>ASCII ENGINE · <span id="stats"></span></div>
+<div id="toast"></div>
+<div id="drop">Drop a .glb model</div>
+<input type="file" id="file" accept=".glb,.gltf" hidden>
+<script type="module" src="./app.js"></script>
+</body>
+</html>

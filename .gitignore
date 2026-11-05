@@ -1,0 +1,17 @@
+# macOS
+.DS_Store
+
+# Recordings and exports made with the engine
+*.mp4
+*.webm
+recordings/
+exports/
+
+# Reference images and mood boards (often other people's work, keep them local)
+refs/
+
+# Tooling
+node_modules/
+__pycache__/
+.vscode/
+.idea/
