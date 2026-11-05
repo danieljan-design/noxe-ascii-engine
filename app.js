@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import GUI from 'lil-gui';
 import { AsciiEngine, defaultParams, VIEWS } from './engine/ascii-engine.js';
+import { renderClip } from './engine/exporter.js';
 import { disposeScene } from './scenes/kit.js';
 import Island from './scenes/island.js';
 import Winter from './scenes/winter.js';
@@ -19,8 +20,8 @@ const LOOK_KEYS = ['weather', 'wDensity', 'wSpeed', 'wWind', 'wSway', 'wBright',
   'lift', 'bloom', 'bloomThreshold', 'bloomRadius', 'tilt', 'tiltCenter', 'tiltWidth', 'tiltFeather', 'vignette', 'cellFill', 'glyphGain', 'bg'];
 
 // ---------- settings ----------
-// xCell / xFps: character size and frame rate used only for the X recordings and X preview.
-const app = { scene: 'Island', autoRotate: true, rotateSpeed: 0.6, timeScale: 1, paused: false, recordSeconds: 10, looks: {}, xCell: 6.5, xFps: 30 };
+// xFps: frame rate of the X renders (they always use the scene's own look: same characters, same grain).
+const app = { scene: 'Island', autoRotate: true, rotateSpeed: 0.6, timeScale: 1, paused: false, recordSeconds: 10, looks: {}, xFps: 60 };
 const params = defaultParams();
 try {
   const saved = JSON.parse(localStorage.getItem(STORE) || 'null');
@@ -55,11 +56,17 @@ let gui = null;
 let sceneFolder = null;
 const sway = { phase: 0, angle: 0 };
 
-// X (Twitter) recording sizes: logical size x pixel ratio 1.5 = 1920x1080 / 1080x1920.
-const RECORD_SIZES = { landscape: [1280, 720], portrait: [720, 1280] };
-const RECORD_DPR = 1.5;
+// X (Twitter) frames. The frame is laid out like the window (the largest 16:9 or 9:16 area that fits it), so
+// characters, grain, blur and framing match what you see. Renders draw that same layout at a higher pixel
+// ratio for an exact 4K file: X then makes its 1080p and 720p copies by clean halves and thirds.
+const X_FRAMES = { landscape: { aspect: 16 / 9, out: [3840, 2160] }, portrait: { aspect: 9 / 16, out: [2160, 3840] } };
+const xFrameCss = (mode) => {
+  const a = X_FRAMES[mode].aspect, w = window.innerWidth, h = window.innerHeight;
+  return w / h > a ? [h * a, h] : [w, w / a];
+};
 let recordMode = null; // null = record/draw the window as is
-let recordingWindow = false; // true while 'record this window' runs (caps the size the encoder gets)
+let recordingWindow = false; // true while a live recording runs (caps the size the encoder gets)
+let exportingX = false; // true while an X render (video or PNG) owns the canvas
 const preview = { frame: 'window' }; // letterboxed preview of an X frame, kept until changed
 
 // Scenes can give their framed shots a different setup for tall frames (frame.portrait).
@@ -113,21 +120,39 @@ function loadScene(name) {
   }
 }
 
-// Logical (CSS-pixel) size of the drawing: the window, or the fixed recording size.
+// Logical (CSS-pixel) size of the drawing: the window, or the X frame letterboxed in it.
 const view = { w: 1, h: 1 };
 // keepCamera: only change the frame size; leave the camera's position, angle and zoom exactly as they are.
 function resize(keepCamera = false) {
   const wasPortrait = camera.aspect < 1;
+  const screenPr = Math.min(window.devicePixelRatio || 1, 2);
+  engine.exportScale = 1;
+  engine.override = {};
   if (recordMode) {
-    const [w, h] = RECORD_SIZES[recordMode];
-    // X re-compresses uploads hard: bigger characters and no frame-to-frame grain survive it much better.
-    engine.override = { cellSize: app.xCell, grain: 0 };
-    renderer.setPixelRatio(RECORD_DPR);
-    renderer.setSize(w, h, false);
-    // Letterbox the fixed-size frame in the window so you see exactly what is being recorded.
-    const k = Math.min(window.innerWidth / w, window.innerHeight / h);
-    Object.assign(canvas.style, { width: `${w * k}px`, height: `${h * k}px`, left: `${(window.innerWidth - w * k) / 2}px`, top: `${(window.innerHeight - h * k) / 2}px` });
-    Object.assign(view, { w, h });
+    const [cw, ch] = xFrameCss(recordMode);
+    if (exportingX) {
+      // The preview's own pixels times a whole number k (at least 4K), scaled down to exact 4K when the
+      // frame is saved: every character, row, blur and grain speck is the screen's, k times over.
+      const [ow, oh] = X_FRAMES[recordMode].out;
+      const Wp = Math.floor((cw * screenPr) / 2) * 2, Hp = Math.floor((ch * screenPr) / 2) * 2; // the preview's pixels
+      const k = Math.max(1, Math.ceil(Math.max(ow / Wp, oh / Hp) - 1e-6));
+      renderer.setPixelRatio(screenPr * k);
+      renderer.setSize(Wp / screenPr + 1e-4, Hp / screenPr + 1e-4, false); // exactly Wp·k × Hp·k
+      Object.assign(view, { w: Wp / screenPr, h: Hp / screenPr });
+      engine.exportScale = k;
+      // characters exactly as the screen rounds them to whole pixels, times k
+      const cwS = Math.max(2, Math.round(params.cellSize * screenPr)), chS = Math.max(3, Math.round(params.cellSize * params.cellAspect * screenPr));
+      engine.override = { cellSize: cwS / screenPr, cellAspect: chS / cwS };
+    } else {
+      // Preview: the X frame letterboxed in the window, characters exactly as in the full window.
+      let pr = screenPr;
+      if (recordingWindow) pr = Math.min(pr, 3840 / Math.max(cw, ch), 2160 / Math.min(cw, ch));
+      const W = Math.floor((cw * pr) / 2) * 2, H = Math.floor((ch * pr) / 2) * 2;
+      renderer.setPixelRatio(pr);
+      renderer.setSize(W / pr + 1e-4, H / pr + 1e-4, false);
+      Object.assign(view, { w: W / pr, h: H / pr });
+    }
+    Object.assign(canvas.style, { width: `${cw}px`, height: `${ch}px`, left: `${(window.innerWidth - cw) / 2}px`, top: `${(window.innerHeight - ch) / 2}px` });
   } else {
     const w = window.innerWidth, h = window.innerHeight;
     let pr = Math.min(window.devicePixelRatio || 1, 2);
@@ -193,10 +218,12 @@ function download(blob, name) {
 let pendingPNG = false;
 let recorder = null;
 const exportActions = {
-  png: () => { pendingPNG = true; },
-  record: () => startRecording(null),
-  recordLandscape: () => startRecording('landscape'),
-  recordPortrait: () => startRecording('portrait'),
+  // With an X preview frame on, P saves that frame as an exact 4K PNG; otherwise the window as it is.
+  png: () => (recordMode && !recorder ? savePngForX(recordMode) : (pendingPNG = true)),
+  photoX: () => !recorder && savePhotoForX(),
+  record: () => startRecording(),
+  recordLandscape: () => renderForX('landscape'),
+  recordPortrait: () => renderForX('portrait'),
   copy: async () => {
     await navigator.clipboard.writeText(JSON.stringify({ params, app }, null, 2));
     toast('Settings copied');
@@ -213,24 +240,96 @@ const exportActions = {
 };
 
 // ---------- recording ----------
-// mode: null = the window as it is; 'landscape' / 'portrait' = fixed X (Twitter) sizes.
-// MP4 (H.264) when the browser can, which X accepts directly; 60fps, ~20 Mbps (X allows up to 25).
-const RECORD_LABELS = { null: 'record this window', landscape: 'record for X: landscape 1920×1080', portrait: 'record for X: portrait 1080×1920' };
+// X renders: the scene stepped frame by frame at a fixed rate (never drops or doubles a frame), drawn at
+// exact 4K with the scene's own look, H.264 High at a high bitrate, standard MP4. Your cursor and clicks are
+// not part of a render: for a take with interaction use 'record this window', which records live.
+const RECORD_LABELS = { null: 'record this window (live)', landscape: 'render for X: landscape 3840×2160', portrait: 'render for X: portrait 2160×3840' };
 let recordTimer = null;
 function setRecordLabels(active) {
   for (const [mode, ctrl] of Object.entries(recordCtrls)) ctrl.name(active === undefined ? RECORD_LABELS[mode] : 'stop recording');
 }
+
+async function renderForX(mode, { keep = false } = {}) {
+  if (exportingX || recorder || recordStarting) return null;
+  exportingX = true;
+  recordMode = mode;
+  resize(true); // render from exactly where the camera is now
+  const fps = Number(app.xFps) || 60;
+  const [ow, oh] = X_FRAMES[mode].out;
+  try {
+    const { blob } = await renderClip({
+      canvas, width: ow, height: oh, fps, seconds: app.recordSeconds,
+      // 45 Mbps at 60fps, 30 at 30fps: X re-encodes everything, so the file it starts from should be near clean
+      bitrate: fps > 30 ? 45e6 : 30e6,
+      step, render: draw,
+      onProgress: (p) => toast(`Rendering for X ${Math.round(p * 100)}%`),
+    });
+    if (!keep) download(blob, `noxe-ascii-${app.scene.toLowerCase()}-x-${mode}-${stamp()}.mp4`);
+    toast(`Video saved: ${ow}×${oh}, ${fps}fps, ${(blob.size / 1e6).toFixed(0)} MB`);
+    return blob;
+  } catch (e) {
+    console.error(e);
+    toast('Render failed: ' + e.message);
+    return null;
+  } finally {
+    exportingX = false;
+    recordMode = preview.frame === 'window' ? null : preview.frame;
+    resize(true);
+    clock.getDelta();
+  }
+}
+
+// The X frame as a still at exact 4K. type 'png': lossless master. type 'jpeg': photo for X, the highest
+// quality that stays under X's 5 MB photo limit (X turns photos into JPEGs itself; a dense 4K PNG is 15+ MB).
+async function saveStillForX(mode, { type = 'png', keep = false } = {}) {
+  if (exportingX) return null;
+  exportingX = true;
+  recordMode = mode;
+  resize(true);
+  try {
+    draw();
+    // copy through a 2D canvas (never a stale frame), scaled down to the exact X size
+    const [ow, oh] = X_FRAMES[mode].out;
+    const c = document.createElement('canvas');
+    c.width = ow;
+    c.height = oh;
+    const g = c.getContext('2d');
+    g.imageSmoothingQuality = 'high';
+    g.drawImage(canvas, 0, 0, ow, oh);
+    let blob, q = null;
+    if (type === 'jpeg') {
+      for (q of [0.95, 0.93, 0.91, 0.89, 0.87, 0.85, 0.82, 0.8]) {
+        blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', q));
+        if (blob.size < 4.9e6) break;
+      }
+    } else {
+      blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+    }
+    const ext = type === 'jpeg' ? 'jpg' : 'png';
+    if (!keep) download(blob, `noxe-ascii-${app.scene.toLowerCase()}-x-${mode}-${stamp()}.${ext}`);
+    toast(`${type === 'jpeg' ? `Photo for X saved (JPEG ${Math.round(q * 100)}%, ` : 'PNG saved ('}${(blob.size / 1e6).toFixed(1)} MB): ${ow}×${oh}`);
+    return blob;
+  } finally {
+    exportingX = false;
+    recordMode = preview.frame === 'window' ? null : preview.frame;
+    resize(true);
+  }
+}
+const savePngForX = (mode, opts) => saveStillForX(mode, { ...opts, type: 'png' });
+const savePhotoForX = (mode = recordMode || 'landscape', opts) => saveStillForX(mode, { ...opts, type: 'jpeg' });
+
 let recordStarting = false;
-function startRecording(mode) {
-  if (recordStarting) return;
+function startRecording() {
+  if (recordStarting || exportingX) return;
   if (recorder) { recorder.stop(); return; }
-  // 'record this window' records whatever is showing, including a preview frame.
-  recordMode = mode ?? (preview.frame === 'window' ? null : preview.frame);
-  // H.264 level 5.1 (avc1.640033) allows up to 4K for window recordings; 4.2 is plenty for the 1080p X sizes.
-  const avc = recordMode ? ['avc1.64002A', 'avc1.640028'] : ['avc1.640033', 'avc1.640032', 'avc1.64002A'];
+  // Live recording of whatever is showing (the window, or the X preview frame), for takes with your cursor and clicks.
+  recordMode = preview.frame === 'window' ? null : preview.frame;
+  const mode = recordMode;
+  // H.264 level 5.1 (avc1.640033) allows up to 4K.
+  const avc = ['avc1.640033', 'avc1.640032', 'avc1.64002A'];
   const types = [...avc.map((c) => `video/mp4;codecs=${c}`), 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
   const type = types.find((t) => MediaRecorder.isTypeSupported(t));
-  recordingWindow = !recordMode;
+  recordingWindow = true;
   resize(true); // record from exactly where the camera is now
   recordStarting = true;
   // Only open the capture once frames at the new size are being drawn: an MP4 (H.264) stream
@@ -238,7 +337,7 @@ function startRecording(mode) {
   setTimeout(() => {
     recordStarting = false;
     const chunks = [];
-    const stream = canvas.captureStream(recordMode ? app.xFps : 60);
+    const stream = canvas.captureStream(60);
     // The encoder overshoots on dense ASCII detail (asking 20 gave ~40 Mbps), so aim lower to land near X's ~25 Mbps ceiling.
     recorder = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: 11e6 });
     recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
@@ -257,7 +356,7 @@ function startRecording(mode) {
     };
     recorder.start();
     setRecordLabels(mode);
-    toast(`Recording ${app.recordSeconds}s${mode ? ` · ${RECORD_LABELS[mode].replace('record for ', '')}` : ''}`);
+    toast(`Recording ${app.recordSeconds}s live${mode ? ` · X ${mode} frame` : ''}`);
     recordTimer = setTimeout(() => recorder?.state === 'recording' && recorder.stop(), app.recordSeconds * 1000);
   }, 300);
 }
@@ -370,11 +469,11 @@ fDebug.add(params, 'split', 0, 1, 0.01).name('split position');
 
 const fOut = gui.addFolder('Export');
 fOut.add(exportActions, 'png').name('save PNG  [P]');
+fOut.add(exportActions, 'photoX').name('save photo for X (4K JPEG, under 5 MB)');
 fOut.add(preview, 'frame', { 'this window': 'window', 'X landscape 16:9': 'landscape', 'X portrait 9:16': 'portrait' })
   .name('preview frame')
   .onChange((v) => { recordMode = v === 'window' ? null : v; resize(); });
 fOut.add(app, 'recordSeconds', 2, 60, 1).name('video seconds');
-fOut.add(app, 'xCell', 3, 16, 0.5).name('X cell size').onChange(() => recordMode && resize(true));
 fOut.add(app, 'xFps', [30, 60]).name('X frame rate');
 const recordCtrls = {
   null: fOut.add(exportActions, 'record').name(RECORD_LABELS.null),
@@ -418,8 +517,8 @@ const clock = new THREE.Clock();
 const Y = new THREE.Vector3(0, 1, 0);
 const offset = new THREE.Vector3();
 let t = 0, frames = 0, fpsT = 0;
-function tick() {
-  const dt = Math.min(clock.getDelta(), 0.1);
+// One step of the world: the live loop calls it with real time, X renders with a fixed 1/fps.
+function step(dt) {
   if (!app.paused) t += dt * app.timeScale;
   const swayDeg = effectiveFrame(world.def.frame).sway;
   controls.autoRotate = app.autoRotate && !app.paused && !swayDeg;
@@ -435,7 +534,15 @@ function tick() {
   controls.update(dt);
   engine.focusDistance = camera.position.distanceTo(controls.target);
   world.update?.(t, app.paused ? 0 : dt * app.timeScale);
+}
+function draw() {
   engine.render(world.scene, camera, t);
+}
+function tick() {
+  if (exportingX) { requestAnimationFrame(tick); return; } // an X render is stepping the scene itself
+  const dt = Math.min(clock.getDelta(), 0.1);
+  step(dt);
+  draw();
   if (pendingPNG) {
     pendingPNG = false;
     canvas.toBlob((b) => { download(b, `noxe-ascii-${stamp()}.png`); toast('PNG saved'); }, 'image/png');
@@ -449,5 +556,5 @@ function tick() {
   requestAnimationFrame(tick);
 }
 await engine.rebuildAtlas();
-window.__ascii = { engine, params, app, renderer, camera, controls, preview, get world() { return world; } };
+window.__ascii = { engine, params, app, renderer, camera, controls, preview, renderForX, savePngForX, savePhotoForX, step, draw, get world() { return world; } };
 tick();

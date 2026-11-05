@@ -83,6 +83,7 @@ export class AsciiEngine {
     // 3D particles (snow, embers...) drawn straight into the character grid: one point = one cell, nearest wins.
     this.rtParticles = rt({ ...nearest, depthBuffer: true });
     this.rtCompose = rt();
+    this.rtBase = rt(); // exports only: the characters drawn at screen resolution, for tilt-shift and glow
     this.rtHalf = [rt(), rt()];
     this.rtQuarter = [rt(), rt()];
 
@@ -120,7 +121,7 @@ export class AsciiEngine {
       tColor: F(this.rtColor.texture), tAux: F(this.rtAux.texture), tEdge: F(this.rtEdge.texture),
       uView: { value: 0 }, uRes: V2(), uSplit: F(), uExposure: F(),
       uTilt: F(), uTiltCenter: F(), uTiltWidth: F(), uTiltFeather: F(), uBloom: F(),
-      uVignette: F(), uGrain: F(), uTime: F(),
+      uVignette: F(), uGrain: F(), uGrainPx: { value: 1 }, uTime: F(),
     });
 
     this.auxCache = new Map();
@@ -128,6 +129,10 @@ export class AsciiEngine {
     this.windBoost = 0;                          // runtime gusts added to the weather wind
     this.focusDistance = 20;                     // camera to target, used to place snow layers in depth
     this.override = {};                          // temporary param overrides (e.g. recording: { cellSize, grain })
+    // Whole number k when an export draws the screen's pixels k times over (1 on screen). Glow and tilt-shift
+    // are then worked out from a screen-resolution copy of the characters, and grain specks are k pixels,
+    // so the export looks like the screen, just with k×k pixels per screen pixel.
+    this.exportScale = 1;
     this._hooks = [];
     this._swapped = [];
     this._hidden = [];
@@ -181,21 +186,25 @@ export class AsciiEngine {
     const dpr = r.getPixelRatio();
     // Whole-pixel cells: every glyph renders identically, which looks crisper and compresses far better.
     const cellCss = this.override.cellSize ?? p.cellSize;
-    const cw = Math.max(2, Math.round(cellCss * dpr)), ch = Math.max(3, Math.round(cellCss * p.cellAspect * dpr));
+    const aspect = this.override.cellAspect ?? p.cellAspect;
+    const cw = Math.max(2, Math.round(cellCss * dpr)), ch = Math.max(3, Math.round(cellCss * aspect * dpr));
     const cols = Math.ceil(W / cw), rows = Math.ceil(H / ch);
     const sw = Math.max(16, Math.round((W / dpr) * p.detail));
     const sh = Math.max(16, Math.round((H / dpr) * p.detail));
-    const key = `${W}x${H}|${cols}x${rows}|${sw}x${sh}`;
+    const k = Math.max(1, Math.round(this.exportScale));
+    const Wb = Math.floor(W / k), Hb = Math.floor(H / k); // screen-resolution size of the frame
+    const key = `${W}x${H}|${cols}x${rows}|${sw}x${sh}|${k}`;
     if (key !== this._layoutKey) {
       this._layoutKey = key;
       for (const t of [this.rtColor, this.rtAux, this.rtEdge]) t.setSize(sw, sh);
       this.rtCells.setSize(cols, rows);
       this.rtParticles.setSize(cols, rows);
       this.rtCompose.setSize(W, H);
-      for (const t of this.rtHalf) t.setSize(Math.ceil(W / 2), Math.ceil(H / 2));
-      for (const t of this.rtQuarter) t.setSize(Math.ceil(W / 4), Math.ceil(H / 4));
+      this.rtBase.setSize(k > 1 ? Wb : 1, k > 1 ? Hb : 1);
+      for (const t of this.rtHalf) t.setSize(Math.ceil(Wb / 2), Math.ceil(Hb / 2));
+      for (const t of this.rtQuarter) t.setSize(Math.ceil(Wb / 4), Math.ceil(Hb / 4));
     }
-    Object.assign(this.size, { W, H, cols, rows, sw, sh, cw, ch, cellCss: cw / dpr });
+    Object.assign(this.size, { W, H, cols, rows, sw, sh, cw, ch, cellCss: cw / dpr, k, Wb, Hb });
     // Map the camera's full view onto exactly the cells that cover the screen.
     this.rtParticles.viewport.set(0, 0, Math.round(W / cw), Math.round(H / ch));
   }
@@ -338,7 +347,7 @@ export class AsciiEngine {
     c.uEdges.value = p.edges ? 1 : 0; c.uEdgeCoverage.value = p.edgeCoverage; c.uEdgeGain.value = p.edgeGain;
     hexToVec3(p.edgeTint, c.uEdgeTint.value); c.uEdgeTintMix.value = p.edgeTintMix;
     c.uOrientMin.value = p.orientMin; c.uOrientRot.value = p.orientRot;
-    c.uNear.value = camera.near; c.uFar.value = camera.far; c.uTime.value = time; c.uCellAspect.value = p.cellAspect;
+    c.uNear.value = camera.near; c.uFar.value = camera.far; c.uTime.value = time; c.uCellAspect.value = this.override.cellAspect ?? p.cellAspect;
     c.uWeather.value = { snow: 1, rain: 2, motes: 3 }[p.weather] ?? 0;
     c.uWDensity.value = p.wDensity; c.uWSpeed.value = p.wSpeed; c.uWWind.value = p.wWind + this.windBoost;
     c.uWSway.value = p.wSway; c.uWBright.value = p.wBright; hexToVec3(p.wColor, c.uWColor.value);
@@ -354,18 +363,27 @@ export class AsciiEngine {
     hexToVec3(p.bg, k.uBg.value);
     k.uCellFill.value = p.cellFill; k.uGlyphGain.value = p.glyphGain; k.uLift.value = p.lift;
     for (let i = 0; i < MAX_SETS; i++) k.uSetFill.value[i] = p.sets[i]?.fill ?? 1;
+    let src = this.rtCompose, srcW = s.W, srcH = s.H;
+    if (s.k > 1 && (p.tilt > 0 || p.bloom > 0)) {
+      // Export drawn k times over: also draw the characters exactly as the screen does (screen-size cells,
+      // screen resolution). Tilt-shift and glow are worked out from that, so they match the screen exactly.
+      k.uCellPx.value.set(s.cw / s.k, s.ch / s.k);
+      this._pass(this.mCompose, this.rtBase);
+      k.uCellPx.value.set(s.cw, s.ch);
+      src = this.rtBase; srcW = s.Wb; srcH = s.Hb;
+    }
     this._pass(this.mCompose, this.rtCompose);
 
-    // 6. Tilt-shift (half res) and bloom (quarter res).
+    // 6. Tilt-shift (half res) and bloom (quarter res), always at screen resolution.
     const d = this.mDown.uniforms;
     if (p.tilt > 0) {
-      d.tInput.value = this.rtCompose.texture; d.uTexel.value.set(1 / s.W, 1 / s.H);
+      d.tInput.value = src.texture; d.uTexel.value.set(1 / srcW, 1 / srcH);
       d.uOffset.value = 0; d.uThreshold.value = -1;
       this._pass(this.mDown, this.rtHalf[0]);
       this._blur(this.rtHalf, p.tiltBlurX, p.tiltBlurY, 2);
     }
     if (p.bloom > 0) {
-      d.tInput.value = this.rtCompose.texture; d.uTexel.value.set(1 / s.W, 1 / s.H);
+      d.tInput.value = src.texture; d.uTexel.value.set(1 / srcW, 1 / srcH);
       d.uOffset.value = 1; d.uThreshold.value = p.bloomThreshold;
       this._pass(this.mDown, this.rtQuarter[0]);
       this._blur(this.rtQuarter, p.bloomRadius, p.bloomRadius, 2);
@@ -378,6 +396,7 @@ export class AsciiEngine {
     f.uTilt.value = p.tilt; f.uTiltCenter.value = p.tiltCenter; f.uTiltWidth.value = p.tiltWidth;
     f.uTiltFeather.value = p.tiltFeather; f.uBloom.value = p.bloom;
     f.uVignette.value = p.vignette; f.uGrain.value = this.override.grain ?? p.grain; f.uTime.value = time;
+    f.uGrainPx.value = Math.max(1, this.exportScale);
     this._pass(this.mFinal, null);
   }
 }

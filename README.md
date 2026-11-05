@@ -18,7 +18,7 @@ Real-time 3D scenes redrawn as coloured characters, right in the browser. Build 
 - **Oriented strokes.** Grass and wheat draw their strokes along the way each blade leans, and they follow the wind.
 - **Particles in the character grid.** Snow, sparks and bubbles live in the 3D scene and hide behind nearer objects.
 - **Look controls.** Exposure, saturation, bloom, tilt-shift, vignette, grain, cell size and font, all live in the panel and remembered per scene.
-- **Export.** Save PNG frames or record MP4 video, including fixed 1920×1080 and 1080×1920 sizes for posting to X.
+- **Export.** Save PNG frames, render frame-perfect 4K MP4 video and 4K photos for posting to X (3840×2160 and 2160×3840, the scene's own look), or record the window live.
 - **Bring your own model.** Drop a `.glb` file on the page and it gets glyph sets guessed from its material names.
 - **No build step.** Plain ES modules. Open the page and go.
 
@@ -101,11 +101,13 @@ In an `auxPatch` you can also replace `objectNormal`. Orientation sets draw thei
 
 Everything is under **Export** in the panel.
 
-- **record this window** records what you see, at up to 4K.
-- **record for X: landscape** (1920×1080) and **portrait** (1080×1920) render at that exact size, letterboxed in the window, and save an H.264 MP4 ready to post. They use their own **X cell size** (bigger characters survive X's re-compression better), turn grain off and default to 30fps (**X frame rate**).
-- **preview frame** shows the X letterbox without recording, so you can compose the shot first.
+- **render for X: landscape** (3840×2160) and **portrait** (2160×3840) render the X frame offline, frame by frame at a locked frame rate (**X frame rate**, 60 or 30), so nothing is ever dropped or doubled, and save an H.264 High MP4 ready to post. The frame is laid out exactly like the preview: same characters, same grain, same glow and tilt-shift. It is drawn at a whole multiple of your screen's pixels and scaled down to exact 4K, so X's own 1080p and 720p copies are clean halves and thirds of it.
+- **preview frame** letterboxes the X frame in the window so you can compose the shot first. Characters stay exactly the size they are in the full window.
+- **record this window (live)** records what you see in real time, at up to 4K, including your cursor and clicks (a render can't include interaction). Keep the window visible while recording, or the browser slows the page down and the video stutters. Browsers that cannot record MP4 save WebM instead.
+- **save PNG** (`P`) saves the window, or with an X preview frame on, that frame as an exact 4K PNG.
+- **save photo for X** saves the X frame as a 4K JPEG at the highest quality under X's 5 MB photo limit (X turns photos into JPEGs anyway, and a detailed 4K PNG is 15 MB or more).
 
-Recording starts from wherever the camera is. Keep the window visible while recording, or the browser slows the page down and the video stutters. Browsers that cannot record MP4 save WebM instead.
+Renders and recordings start from wherever the camera is.
 
 ## Project layout
 

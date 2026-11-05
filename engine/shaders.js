@@ -317,6 +317,7 @@ uniform float uTiltFeather;
 uniform float uBloom;
 uniform float uVignette;
 uniform float uGrain;
+uniform float uGrainPx;
 uniform float uTime;
 varying vec2 vUv;
 
@@ -347,7 +348,8 @@ void main() {
 
   vec2 q = vUv - 0.5;
   c *= mix(1.0, smoothstep(1.15, 0.35, length(q) * 1.4142), uVignette);
-  c += (hash(gl_FragCoord.xy + fract(uTime * 7.31) * 97.0) - 0.5) * uGrain;
+  // grain specks are uGrainPx pixels wide (1 on screen), so renders at a higher pixel ratio keep the same grain
+  c += (hash(floor(gl_FragCoord.xy / uGrainPx) + fract(uTime * 7.31) * 97.0) - 0.5) * uGrain;
   gl_FragColor = vec4(max(c, 0.0), 1.0);
 }
 `;
