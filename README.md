@@ -2,7 +2,7 @@
 
 Real-time 3D scenes redrawn as coloured characters, right in the browser. Build a scene in [three.js](https://threejs.org) and the engine turns every frame into living ASCII art: brightness picks the character, surfaces and edges pick their own glyphs, and the whole thing runs at full frame rate.
 
-**[Try the live demo](https://danieljan-design.github.io/noxe-ascii-engine/)** (desktop Chrome or Edge recommended)
+**[Try the live demo](https://ascii.noxestudio.com/)** (desktop Chrome or Edge recommended)
 
 ![Winter cabin scene](docs/winter.png)
 
@@ -24,7 +24,7 @@ Real-time 3D scenes redrawn as coloured characters, right in the browser. Build 
 
 ## Quick start
 
-To just play with it, open the [live demo](https://danieljan-design.github.io/noxe-ascii-engine/). To run it locally and edit the code, you need Python 3 (already on macOS) and a browser with WebGL 2. Chrome or Edge is recommended, since they can record MP4.
+To just play with it, open the [live demo](https://ascii.noxestudio.com/). To run it locally and edit the code, you need Python 3 (already on macOS) and a browser with WebGL 2. Chrome or Edge is recommended, since they can record MP4.
 
 ```bash
 git clone https://github.com/danieljan-design/noxe-ascii-engine.git
